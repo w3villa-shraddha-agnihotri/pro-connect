@@ -79,11 +79,12 @@ function getAuthenticatedUserId(req, res) {
     return userId;
   } catch {
     res.clearCookie("proconnect_token", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-    });
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite:
+    process.env.NODE_ENV === "production" ? "none" : "lax",
+  path: "/",
+});
 
     res.status(401).json({
       success: false,
