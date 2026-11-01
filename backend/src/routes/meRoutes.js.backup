@@ -1,0 +1,204 @@
+
+import { Router } from "express";
+import jwt from "jsonwebtoken";
+import { prisma } from "../lib/prisma.js";
+
+const router = Router();
+
+function parseAddressComponents(rawAddress) {
+  if (!rawAddress || typeof rawAddress !== "string") {
+    return { street: "", city: "", state: "", pincode: "", fullAddress: "" };
+  }
+
+  const raw = rawAddress.trim();
+  let pincode = "";
+  let withoutPin = raw;
+  const pinMatch = raw.match(/[-,\s]+(\b\d{5,6}\b)$/);
+  if (pinMatch) {
+    pincode = pinMatch[1];
+    withoutPin = raw.slice(0, pinMatch.index).trim();
+  }
+
+  const parts = withoutPin.split(",").map((p) => p.trim()).filter(Boolean);
+  let street = "";
+  let city = "";
+  let state = "";
+
+  if (parts.length === 1) {
+    city = parts[0];
+  } else if (parts.length === 2) {
+    city = parts[0];
+    state = parts[1];
+  } else if (parts.length >= 3) {
+    state = parts[parts.length - 1];
+    city = parts[parts.length - 2];
+    street = parts.slice(0, parts.length - 2).join(", ");
+  }
+
+  return { street, city, state, pincode, fullAddress: raw };
+}
+
+router.get("/me", async (req, res) => {
+  try {
+    const token = req.cookies?.proconnect_token;
+
+    if (!token) {
+      return res.status(401).json({
+        message: "Not authenticated",
+      });
+    }
+
+    let payload;
+
+    try {
+      payload = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      res.clearCookie("proconnect_token", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+      });
+
+      return res.status(401).json({
+        message: "Session expired. Please sign in again.",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: Number(payload.userId) },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+        role: true,
+        is_verified: true,
+        profile_image: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        message: "User account not found",
+      });
+    }
+
+    const parsed = parseAddressComponents(user.address);
+
+    return res.json({
+      user: {
+        ...user,
+        street: parsed.street,
+        city: parsed.city,
+        state: parsed.state,
+        pincode: parsed.pincode,
+      },
+    });
+  } catch (error) {
+    console.error("Get current user error:", error.message);
+
+    return res.status(500).json({
+      message: "Unable to retrieve user",
+    });
+  }
+});
+
+// Update user address & location coordinates
+router.put(["/address", "/me/address"], async (req, res) => {
+  try {
+    const token = req.cookies?.proconnect_token;
+
+    if (!token) {
+      return res.status(401).json({
+        message: "Please log in to update address.",
+      });
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({
+        message: "Session expired. Please sign in again.",
+      });
+    }
+
+    const userId = Number(payload.userId);
+    const { street, city, state, pincode, address, latitude, longitude } =
+      req.body;
+
+    const finalStreet = (street || "").trim();
+    const finalCity = (city || "").trim();
+    const finalState = (state || "").trim();
+    const finalPincode = (pincode || "").trim();
+
+    if (!finalCity || !finalState) {
+      return res.status(400).json({
+        success: false,
+        message: "City and State are required for address.",
+      });
+    }
+
+    let finalAddress = (address || "").trim();
+    if (finalStreet || !finalAddress) {
+      const parts = [];
+      if (finalStreet) parts.push(finalStreet);
+      if (finalCity) parts.push(finalCity);
+      if (finalState) parts.push(finalState);
+      finalAddress =
+        parts.join(", ") + (finalPincode ? ` - ${finalPincode}` : "");
+    }
+
+    const lat =
+      latitude != null && !isNaN(Number(latitude)) ? Number(latitude) : null;
+    const lng =
+      longitude != null && !isNaN(Number(longitude)) ? Number(longitude) : null;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        address: finalAddress,
+        latitude: lat,
+        longitude: lng,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+        role: true,
+        is_verified: true,
+        profile_image: true,
+      },
+    });
+
+    const parsed = parseAddressComponents(updatedUser.address);
+
+    return res.json({
+      success: true,
+      message: "Address updated successfully.",
+      user: {
+        ...updatedUser,
+        street: parsed.street,
+        city: parsed.city,
+        state: parsed.state,
+        pincode: parsed.pincode,
+      },
+    });
+  } catch (error) {
+    console.error("Update address error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update address.",
+    });
+  }
+});
+
+export default router;

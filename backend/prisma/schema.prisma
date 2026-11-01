@@ -1,0 +1,195 @@
+// Prisma schema for ProConnect
+// Database: MySQL
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id                           Int                      @id @default(autoincrement())
+  name                         String
+  email                        String                   @unique
+  password                     String?
+  is_verified                  Boolean                  @default(false)
+  role                         String                   @default("CUSTOMER")
+  profile_image                String?
+  address                      String?
+  phone                        String?
+  latitude                     Float?
+  longitude                    Float?
+  created_at                   DateTime                 @default(now())
+  updated_at                   DateTime                 @updatedAt
+  professional_profile         ProfessionalProfile?
+  email_verification_tokens    EmailVerificationToken[]
+  social_accounts              SocialAccount[]
+  subscriptions                Subscription[]
+  payments                     Payment[]
+  is_available                 Boolean                  @default(true)
+  services                     ProfessionalService[]
+  sent_connection_requests     ConnectionRequest[]      @relation("CustomerRequests")
+  received_connection_requests ConnectionRequest[]      @relation("ProfessionalRequests")
+
+  saved_professionals SavedProfessional[] @relation("CustomerSavedProfessionals")
+  saved_by_customers  SavedProfessional[] @relation("ProfessionalSavedByCustomers")
+
+  @@map("users")
+}
+
+model EmailVerificationToken {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  token_hash String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("email_verification_tokens")
+}
+
+model SocialAccount {
+  id          Int    @id @default(autoincrement())
+  user_id     Int
+  provider    String
+  provider_id String
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([provider, provider_id])
+  @@map("social_accounts")
+}
+
+model Subscription {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  plan       String
+  status     String
+  started_at DateTime
+  expires_at DateTime
+  payment_id String?
+
+  user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@map("subscriptions")
+}
+
+model Payment {
+  id                Int     @id @default(autoincrement())
+  user_id           Int
+  subscription_id   Int?
+  stripe_payment_id String?
+  stripe_session_id String? @unique
+  amount            Float
+  status            String
+
+  user         User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscription_id], references: [id], onDelete: SetNull)
+
+  @@map("payments")
+}
+
+model ProfessionalProfile {
+  id               Int      @id @default(autoincrement())
+  user_id          Int      @unique
+  domain           String
+  bio              String?  @db.Text
+  experience_years Int?
+  portfolio_url    String?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  user   User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  skills ProfessionalSkill[]
+
+  @@map("professional_profiles")
+}
+
+model ProfessionalSkill {
+  id                      Int    @id @default(autoincrement())
+  professional_profile_id Int
+  name                    String
+
+  professional_profile ProfessionalProfile @relation(fields: [professional_profile_id], references: [id], onDelete: Cascade)
+
+  @@unique([professional_profile_id, name])
+  @@map("professional_skills")
+}
+
+model ProfessionalService {
+  id          Int      @id @default(autoincrement())
+  user_id     Int
+  title       String
+  description String?  @db.Text
+  price       Float?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("professional_services")
+}
+
+model ConnectionRequest {
+  id              Int      @id @default(autoincrement())
+  customer_id     Int
+  professional_id Int
+@@index([customer_id, professional_id, connection_removed_at], map: "cr_pair_removed_idx")
+  // Request kisne initiate ki
+  direction       String   @default("CUSTOMER_TO_PROFESSIONAL")
+
+  // Mandatory introduction/message
+  description     String   @db.Text
+
+  // Optional attached document
+  attachment_url  String?
+
+    // Connection removal tracking
+  connection_removed_at DateTime?
+
+  status          String   @default("PENDING")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  customer     User @relation("CustomerRequests", fields: [customer_id], references: [id], onDelete: Cascade)
+  professional User @relation("ProfessionalRequests", fields: [professional_id], references: [id], onDelete: Cascade)
+
+  skills ConnectionRequestSkill[]
+
+  @@index([customer_id, status])
+  @@index([professional_id, status])
+  @@index([direction, status])
+  @@map("connection_requests")
+}
+
+model ConnectionRequestSkill {
+  id                    Int    @id @default(autoincrement())
+  connection_request_id Int
+  name                  String
+
+  connection_request ConnectionRequest @relation(fields: [connection_request_id], references: [id], onDelete: Cascade)
+
+  @@unique([connection_request_id, name])
+  @@map("connection_request_skills")
+}
+
+model SavedProfessional {
+  id              Int      @id @default(autoincrement())
+  customer_id     Int
+  professional_id Int
+  created_at      DateTime @default(now())
+
+  customer     User @relation("CustomerSavedProfessionals", fields: [customer_id], references: [id], onDelete: Cascade)
+  professional User @relation("ProfessionalSavedByCustomers", fields: [professional_id], references: [id], onDelete: Cascade)
+
+  @@unique([customer_id, professional_id])
+  @@index([customer_id])
+  @@map("saved_professionals")
+}
